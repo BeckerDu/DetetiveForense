@@ -1,0 +1,55 @@
+name: Agente LGPD
+
+on:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 11 * * 1" # toda segunda, 08h no horario de Brasilia
+
+# Menor permissao possivel: le o codigo e comenta no PR.
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: lgpd-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lgpd:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Listar arquivos alterados (somente em PR)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git diff --name-only --diff-filter=ACMR "origin/${BASE_REF}...HEAD" > changed.txt
+
+      - name: Rodar scanner
+        id: scan
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            python agent/lgpd_scan.py --files-from changed.txt --output findings.json
+          else
+            python agent/lgpd_scan.py --all --output findings.json
+          fi
+          COUNT=$(python -c "import json; print(len(json.load(open('findings.json'))['findings']))")
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+
+      - name: Revisao com IA e relatorio
+        if: steps.scan.outputs.count != '0'
+        env:
+          # Em PRs de forks este segredo nao existe; o script gera o relatorio so com o scanner.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          pip install --quiet anthropic
+          python agent/lgpd_review.py --findings
