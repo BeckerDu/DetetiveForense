@@ -52,4 +52,24 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           pip install --quiet anthropic
-          python agent/lgpd_review.py --findings
+          python agent/lgpd_review.py --findings findings.json --output report.md
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comentar no PR
+        if: github.event_name == 'pull_request' && steps.scan.outputs.count != '0'
+        continue-on-error: true # PRs de forks nao tem permissao de escrita; o resumo acima continua valendo
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR_NUMBER" --edit-last --create-if-none --body-file report.md
+
+      - name: Guardar relatorio
+        if: steps.scan.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorio-lgpd
+          path: report.md
+
+      # Para bloquear o merge quando houver achado grave, remova o '#' do passo abaixo.
+      # - name: Falhar se houver achado de severidade alta
+      #   run: python agent/lgpd_scan.py --files-from changed.txt --output /dev/null --fail-on alto
